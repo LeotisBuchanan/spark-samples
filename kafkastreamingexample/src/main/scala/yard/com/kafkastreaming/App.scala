@@ -6,7 +6,7 @@
  * consumer group = group
  * topic: test
  * number_of_threads = 5
- * 
+ *
  */
 
 package yard.com.kafkastreaming
@@ -19,14 +19,12 @@ import org.apache.spark.sql.SQLContext
  */
 import java.util.HashMap
 
-import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
-
+import org.apache.kafka.clients.producer.{ KafkaProducer, ProducerConfig, ProducerRecord }
 
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka._
 
-
-object App{
+object App {
   def main(args: Array[String]) {
     if (args.length < 4) {
       System.err.println("Usage: KafkaWordCount <zkQuorum> <group> <topics> <numThreads>")
@@ -45,7 +43,29 @@ object App{
     val words = lines.flatMap(_.split(" "))
     val wordCounts = words.map(x => (x, 1L))
       .reduceByKeyAndWindow(_ + _, _ - _, Minutes(10), Seconds(2), 2)
-    wordCounts.print()
+    //wordCounts.print()
+
+    words.foreachRDD { rdd =>
+
+      // Get the singleton instance of SQLContext
+      val sqlContext = SQLContext.getOrCreate(rdd.sparkContext)
+      import sqlContext.implicits._
+
+      // Convert RDD[String] to DataFrame
+      val wordsDataFrame = rdd.toDF("word")
+
+      // Register as table
+      wordsDataFrame.registerTempTable("words")
+
+      // Do word count on DataFrame using SQL and print it
+      //val wordCountsDataFrame =
+      //  sqlContext.sql("select word, count(*) as total from words group by word")
+       val wordCountsDataFrame =
+        sqlContext.sql("select word from words")
+      //wordCountsDataFrame.write.mode("append").format("parquet").save("namesAndAges.parquet")
+      wordCountsDataFrame.write.mode("append").text("path2.txt")
+      
+    }
 
     ssc.start()
     ssc.awaitTermination()
