@@ -14,6 +14,12 @@ package yard.com.kafkastreaming
 import org.apache.spark.{ SparkConf, SparkContext }
 import org.apache.spark.sql.SQLContext
 
+import java.util.regex.Pattern
+import java.util.regex.Matcher
+import kafka.serializer.StringDecoder
+
+import Utilities._
+
 /**
  * @author ${user.name}
  */
@@ -26,47 +32,42 @@ import org.apache.spark.streaming.kafka._
 
 object App {
   def main(args: Array[String]) {
-    if (args.length < 4) {
-      System.err.println("Usage: KafkaWordCount <zkQuorum> <group> <topics> <numThreads>")
-      System.exit(1)
-    }
+    // Create the context with a 1 second batch size
+    val ssc = new StreamingContext("local[*]", "KafkaExample", Seconds(1))
 
-    //StreamingExamples.setStreamingLogLevels()
+    setupLogging()
 
-    val Array(zkQuorum, group, topics, numThreads) = args
-    val sparkConf = new SparkConf().setAppName("KafkaWordCount").setMaster("local[*]")
-    val ssc = new StreamingContext(sparkConf, Seconds(2))
+    // Construct a regular expression (regex) to extract fields from raw Apache log lines
+    val pattern = apacheLogPattern()
+
+    // hostname:port for Kafka brokers, not Zookeeper
+    val kafkaParams = Map("metadata.broker.list" -> "localhost:9092")
+    // List of topics you want to listen for from Kafka
+    val topics = List("testLogs").toSet
+    // Create our Kafka stream, which will contain (topic,message) pairs. We tack a 
+    // map(_._2) at the end in order to only get the messages, which contain individual
+    // lines of data.
+    val lines = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](
+      ssc, kafkaParams, topics).map(_._2)
+
+    // Extract the request field from each log line
+    val requests = lines.map(x => {
+      val matcher: Matcher = pattern.matcher(x); 
+      if (matcher.matches()) matcher.group(5) })
+
+    // Extract the URL from the request
+    val urls = requests.map(x => { val arr = x.toString().split(" ");
+    if (arr.size == 3) arr(1) else "[error]" })
+
+    // Reduce by URL over a 5-minute window sliding every second
+    val urlCounts = urls.map(x => (x, 1)).reduceByKeyAndWindow(_ + _, _ - _, Seconds(300), Seconds(1))
+
+    // Sort and print the results
+    val sortedResults = urlCounts.transform(rdd => rdd.sortBy(x => x._2, false))
+    sortedResults.print()
+
+    // Kick it off
     ssc.checkpoint("checkpoint")
-
-    val topicMap = topics.split(",").map((_, numThreads.toInt)).toMap
-    val lines = KafkaUtils.createStream(ssc, zkQuorum, group, topicMap).map(_._2)
-    val words = lines.flatMap(_.split(" "))
-    val wordCounts = words.map(x => (x, 1L))
-      .reduceByKeyAndWindow(_ + _, _ - _, Minutes(10), Seconds(2), 2)
-    //wordCounts.print()
-
-    words.foreachRDD { rdd =>
-
-      // Get the singleton instance of SQLContext
-      val sqlContext = SQLContext.getOrCreate(rdd.sparkContext)
-      import sqlContext.implicits._
-
-      // Convert RDD[String] to DataFrame
-      val wordsDataFrame = rdd.toDF("word")
-
-      // Register as table
-      wordsDataFrame.registerTempTable("words")
-
-      // Do word count on DataFrame using SQL and print it
-      //val wordCountsDataFrame =
-      //  sqlContext.sql("select word, count(*) as total from words group by word")
-       val wordCountsDataFrame =
-        sqlContext.sql("select word from words")
-      //wordCountsDataFrame.write.mode("append").format("parquet").save("namesAndAges.parquet")
-      wordCountsDataFrame.write.mode("append").text("path2.txt")
-      
-    }
-
     ssc.start()
     ssc.awaitTermination()
   }
