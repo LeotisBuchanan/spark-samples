@@ -50,25 +50,54 @@ object App {
     val lines = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](
       ssc, kafkaParams, topics).map(_._2)
 
-    // Extract the request field from each log line
-    val requests = lines.map(x => {
-      val matcher: Matcher = pattern.matcher(x); 
-      if (matcher.matches()) matcher.group(5) })
+    //convert each log line to a row rdd 
 
-    // Extract the URL from the request
-    val urls = requests.map(x => { val arr = x.toString().split(" ");
-    if (arr.size == 3) arr(1) else "[error]" })
+    // Extract the (URL, status, user agent) we want from each log line
+    val logs = lines.map(x => {
+      val temp = x.split(",").toList;
+      //list[1,2,4]
+      val logTuple = temp match {
+        case List(ip, datetime, requestMethod) => (ip, datetime, requestMethod)
+      }
 
-    // Reduce by URL over a 5-minute window sliding every second
-    val urlCounts = urls.map(x => (x, 1)).reduceByKeyAndWindow(_ + _, _ - _, Seconds(300), Seconds(1))
+      //return the logtuple
+      logTuple
 
-    // Sort and print the results
-    val sortedResults = urlCounts.transform(rdd => rdd.sortBy(x => x._2, false))
-    sortedResults.print()
+    })
+
+    logs.foreachRDD((rdd, time) => {
+      val sqlContext = SQLContextSingleton.getInstance(rdd.sparkContext)
+      import sqlContext.implicits._
+
+      if (!rdd.isEmpty()) {
+        // Convert RDD[String] to RDD[case class] to DataFrame
+        val logsDataFrame = rdd.map(w => Log(w._1, w._2, w._3)).toDF()
+        logsDataFrame.show()
+        //save logs 
+        logsDataFrame.write.mode("append").format("parquet").save("logs.parquet")
+      }
+
+    })
 
     // Kick it off
     ssc.checkpoint("checkpoint")
     ssc.start()
     ssc.awaitTermination()
+  }
+}
+
+/** Case class for converting RDD to DataFrame */
+case class Log(ipaddress: String, timestamp: String, requestMethod: String)
+
+/** Lazily instantiated singleton instance of SQLContext */
+object SQLContextSingleton {
+
+  @transient private var instance: SQLContext = _
+
+  def getInstance(sparkContext: SparkContext): SQLContext = {
+    if (instance == null) {
+      instance = new SQLContext(sparkContext)
+    }
+    instance
   }
 }
