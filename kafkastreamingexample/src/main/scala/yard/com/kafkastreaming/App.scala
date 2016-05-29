@@ -33,7 +33,29 @@ import org.apache.spark.streaming.kafka._
 object App {
   def main(args: Array[String]) {
     // Create the context with a 1 second batch size
-    val ssc = new StreamingContext("local[*]", "KafkaExample", Seconds(1))
+    
+     if (args.length < 5) {
+      System.err.println(s"""
+        |Usage: KafkaStreamer <kafka_broker_url>,<sparkMaster>
+        |       <kafkaTopic>, <appName>, <batchWindowSize>
+         
+        """.stripMargin)
+      System.exit(1)
+    }
+    
+    val Array(kafka_broker_url,sparkMaster,kafkaTopic, appName, batchWindowSize) = args 
+    
+    println(kafka_broker_url)
+    println(sparkMaster)
+    println(kafkaTopic)
+    println(appName)
+    println(batchWindowSize)
+    
+    
+    
+    val sparkConf = new SparkConf().setAppName(appName).setMaster(sparkMaster)   
+    
+    val ssc = new StreamingContext(sparkConf,Seconds(batchWindowSize.toInt))
 
     setupLogging()
 
@@ -41,9 +63,12 @@ object App {
     val pattern = apacheLogPattern()
 
     // hostname:port for Kafka brokers, not Zookeeper
-    val kafkaParams = Map("metadata.broker.list" -> "localhost:9092")
+    val kafkaParams = Map("metadata.broker.list" -> kafka_broker_url)
     // List of topics you want to listen for from Kafka
-    val topics = List("testLogs").toSet
+    //val topics = List("testLogs").toSet
+    
+    val topics = List(kafkaTopic).toSet
+    
     // Create our Kafka stream, which will contain (topic,message) pairs. We tack a 
     // map(_._2) at the end in order to only get the messages, which contain individual
     // lines of data.
