@@ -17,6 +17,7 @@ import org.apache.spark.sql.SQLContext
 import java.util.regex.Pattern
 import java.util.regex.Matcher
 import kafka.serializer.StringDecoder
+import org.apache.spark.sql._
 
 import Utilities._
 
@@ -30,11 +31,14 @@ import org.apache.kafka.clients.producer.{ KafkaProducer, ProducerConfig, Produc
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka._
 
+import org.apache.spark.sql._
+import org.apache.spark.sql.types._
+
 object App {
   def main(args: Array[String]) {
     // Create the context with a 1 second batch size
-    
-     if (args.length < 5) {
+
+    if (args.length < 5) {
       System.err.println(s"""
         |Usage: KafkaStreamer <kafka_broker_url>,<sparkMaster>
         |       <kafkaTopic>, <appName>, <batchWindowSize>
@@ -42,20 +46,18 @@ object App {
         """.stripMargin)
       System.exit(1)
     }
-    
-    val Array(kafka_broker_url,sparkMaster,kafkaTopic, appName, batchWindowSize) = args 
-    
+
+    val Array(kafka_broker_url, sparkMaster, kafkaTopic, appName, batchWindowSize) = args
+
     println(kafka_broker_url)
     println(sparkMaster)
     println(kafkaTopic)
     println(appName)
     println(batchWindowSize)
-    
-    
-    
-    val sparkConf = new SparkConf().setAppName(appName).setMaster(sparkMaster)   
-    
-    val ssc = new StreamingContext(sparkConf,Seconds(batchWindowSize.toInt))
+
+    val sparkConf = new SparkConf().setAppName(appName).setMaster(sparkMaster)
+
+    val ssc = new StreamingContext(sparkConf, Seconds(batchWindowSize.toInt))
 
     setupLogging()
 
@@ -66,9 +68,9 @@ object App {
     val kafkaParams = Map("metadata.broker.list" -> kafka_broker_url)
     // List of topics you want to listen for from Kafka
     //val topics = List("testLogs").toSet
-    
+
     val topics = List(kafkaTopic).toSet
-    
+
     // Create our Kafka stream, which will contain (topic,message) pairs. We tack a 
     // map(_._2) at the end in order to only get the messages, which contain individual
     // lines of data.
@@ -96,10 +98,20 @@ object App {
 
       if (!rdd.isEmpty()) {
         // Convert RDD[String] to RDD[case class] to DataFrame
-        val logsDataFrame = rdd.map(w => Log(w._1, w._2, w._3)).toDF()
-        logsDataFrame.show()
+        val rowDataFrame = rdd.map(w => Row(w._1, w._2, w._3))
+
+        val schema = StructType(
+          Array(StructField("ip", StringType, true),
+            StructField("dateTime", StringType, true),
+            StructField("requestMethod", StringType, true)))
+
+        
+        
+        val df = sqlContext.createDataFrame(rowDataFrame,schema)
+
+        df.show()
         //save logs 
-        logsDataFrame.write.mode("append").format("parquet").save("logs.parquet")
+        df.write.mode("append").format("parquet").save("logs.parquet")
       }
 
     })
@@ -112,7 +124,8 @@ object App {
 }
 
 /** Case class for converting RDD to DataFrame */
-case class Log(ipaddress: String, timestamp: String, requestMethod: String)
+
+case class Logs(a: String, b: String, c: String)
 
 /** Lazily instantiated singleton instance of SQLContext */
 object SQLContextSingleton {
